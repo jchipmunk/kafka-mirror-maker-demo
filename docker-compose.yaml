@@ -1,0 +1,122 @@
+version: '2.4'
+name: 'kafka-mirror-maker-demo'
+services:
+  source-zookeeper:
+    image: quay.io/debezium/zookeeper:2.6
+    cpus: 0.2
+    mem_limit: 512m
+    mem_reservation: 512m
+
+  source-kafka:
+    image: quay.io/debezium/kafka:2.6
+    cpus: 0.5
+    mem_limit: 1024m
+    mem_reservation: 768m
+    depends_on:
+      - source-zookeeper
+    environment:
+      - ZOOKEEPER_CONNECT=source-zookeeper:2181
+      - KAFKA_HEAP_OPTS=-Xms256m -Xmx512m
+
+  target-zookeeper:
+    image: quay.io/debezium/zookeeper:2.6
+    cpus: 0.2
+    mem_limit: 512m
+    mem_reservation: 512m
+
+  target-kafka:
+    image: quay.io/debezium/kafka:2.6
+    cpus: 0.5
+    mem_limit: 1024m
+    mem_reservation: 768m
+    depends_on:
+      - target-zookeeper
+    environment:
+      - ZOOKEEPER_CONNECT=target-zookeeper:2181
+      - KAFKA_HEAP_OPTS=-Xms256m -Xmx512m
+
+  mirror-maker-1:
+    build:
+      context: mirror-maker
+      args:
+        DEBEZIUM_VERSION: 2.6
+        JMX_AGENT_VERSION: 0.20.0
+        METRICS_PORT: 7071
+    cpus: 0.5
+    mem_limit: 1024m
+    mem_reservation: 768m
+    ports:
+      - 7071:7071
+      - 1501:1501
+    depends_on:
+      - source-kafka
+      - target-kafka
+    environment:
+      - CLUSTER=target
+      - KAFKA_HEAP_OPTS=-Xms256m -Xmx512m -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:1501
+
+  mirror-maker-2:
+    build:
+      context: mirror-maker
+      args:
+        DEBEZIUM_VERSION: 2.6
+        JMX_AGENT_VERSION: 0.20.0
+        METRICS_PORT: 7072
+    cpus: 0.5
+    mem_limit: 1024m
+    mem_reservation: 768m
+    ports:
+      - 7072:7072
+      - 1502:1502
+    depends_on:
+      - source-kafka
+      - target-kafka
+    environment:
+      - CLUSTER=target
+      - KAFKA_HEAP_OPTS=-Xms256m -Xmx512m -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:1502
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    cpus: 0.5
+    mem_limit: 768m
+    mem_reservation: 768m
+    ports:
+      - 8080:8080
+    depends_on:
+      - source-kafka
+      - target-kafka
+    environment:
+      - KAFKA_CLUSTERS_0_NAME=source
+      - KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS=source-kafka:9092
+      - KAFKA_CLUSTERS_1_NAME=target
+      - KAFKA_CLUSTERS_1_BOOTSTRAPSERVERS=target-kafka:9092
+
+  prometheus:
+    image: prom/prometheus:v2.37.6
+    cpus: 0.5
+    mem_limit: 1024m
+    mem_reservation: 512m
+    ports:
+      - 9090:9090
+    command:
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=24h'
+      - '--web.enable-lifecycle'
+      - '--storage.tsdb.no-lockfile'
+      - '--web.route-prefix=/'
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+
+  grafana:
+    image: grafana/grafana:8.3.3
+    cpus: 0.5
+    mem_limit: 1024m
+    mem_reservation: 512m
+    ports:
+      - 3000:3000
+    user: "0"
+    volumes:
+      - ./grafana:/etc/grafana/provisioning
